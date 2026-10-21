@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MK60 log viewer</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #121416;
+            --card: #1c1f22;
+            --ink: #f3f5f4;
+            --muted: #9aa39c;
+            --line: #31383d;
+            --green: #3ddc84;
+            --green-ink: #062214;
+            --amber: #e59a3c;
+            font-family: "Segoe UI", system-ui, sans-serif;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: radial-gradient(1000px 420px at 8% -10%, rgba(61, 220, 132, 0.08), transparent 55%), var(--bg);
+            color: var(--ink);
+        }
+        .wrap { width: min(1120px, calc(100% - 28px)); margin: 0 auto; padding: 24px 0 40px; }
+        h1 { margin: 0 0 14px; font-size: 1.5rem; letter-spacing: -0.03em; }
+        h2 { margin: 0 0 12px; font-size: 1rem; }
+        h3 { margin: 14px 0 8px; color: var(--muted); font-size: 0.78rem; letter-spacing: 0.04em; text-transform: uppercase; }
+        .card {
+            margin-top: 14px;
+            background: var(--card);
+            border: 1px solid #2c3238;
+            border-radius: 16px;
+            padding: 16px;
+        }
+        button, input { font: inherit; color: inherit; }
+        button, .file {
+            border: 1px solid #3a4248;
+            background: #262c30;
+            border-radius: 10px;
+            padding: 8px 14px;
+            cursor: pointer;
+        }
+        button.primary { background: var(--green); color: var(--green-ink); border-color: transparent; font-weight: 650; }
+        .drop {
+            display: grid;
+            place-items: center;
+            min-height: 140px;
+            border: 1px dashed #3d6b50;
+            border-radius: 14px;
+            color: var(--muted);
+            text-align: center;
+            padding: 18px;
+        }
+        .drop.over { background: rgba(61, 220, 132, 0.08); }
+        .drop input { display: none; }
+        .row { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+        .meta { color: var(--muted); font-size: 0.88rem; }
+        label.opt { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+        input[type="number"] {
+            width: 6.2rem;
+            background: #101315;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 6px 8px;
+        }
+        input[type="range"] { width: min(420px, 100%); accent-color: var(--green); }
+        .fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 8px; }
+        .field { background: #14181b; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; min-height: 78px; }
+        .name { color: var(--muted); font-size: 0.75rem; letter-spacing: 0.04em; text-transform: uppercase; }
+        .value {
+            margin-top: 6px;
+            font-family: Consolas, ui-monospace, monospace;
+            font-variant-numeric: tabular-nums;
+            font-size: 1.25rem;
+        }
+        .unit { min-height: 1.1em; color: var(--muted); font-size: 0.75rem; }
+        .invalid { color: var(--amber); }
+        .charts { display: grid; grid-template-columns: 1fr; gap: 14px; }
+        .plot { position: relative; cursor: crosshair; touch-action: none; }
+        .plot canvas, .plot .overlay { width: 100%; height: 220px; display: block; border-radius: 12px; }
+        .plot .overlay { position: absolute; inset: 0; pointer-events: none; }
+        .legend { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 6px; }
+        .legend button { padding: 2px 8px; border-radius: 999px; background: transparent; font-size: 0.85rem; }
+        .legend button.off { opacity: 0.35; }
+        .swatch { display: inline-block; width: 0.65em; height: 0.65em; border-radius: 2px; margin-right: 5px; }
+        .table-wrap { overflow-x: auto; margin-top: 8px; }
+        table { width: 100%; border-collapse: collapse; font-family: Consolas, ui-monospace, monospace; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+        th, td { text-align: right; padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+        th:first-child, td:first-child { text-align: left; }
+        th { color: var(--muted); font-weight: 550; }
+        tr.cursor td { background: rgba(61, 220, 132, 0.12); }
+        tr.brake td:first-child { box-shadow: inset 3px 0 0 #ff5d73; }
+        tr { cursor: pointer; }
+        .error { color: #ffb4a8; min-height: 1.2em; }
+        [hidden] { display: none !important; }
+        @media (max-width: 800px) { .charts { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <h1>MK60 log viewer</h1>
+        <section class="card">
+            <label class="drop" id="drop">
+                <input id="file" type="file" accept=".csv,text/csv,text/plain">
+                <span id="drop-label">Drop a logger CSV here, or click to open</span>
+            </label>
+            <p class="error" id="error"></p>
+            <div id="loaded" hidden>
+                <div class="row">
+                    <button class="primary" id="again" type="button">Open another file</button>
+                    <span class="meta" id="summary"></span>
+                </div>
+                <p class="meta" id="comments"></p>
+                <div class="row">
+                    <label class="opt">From <input id="from" type="number" step="0.1" value="0"> s</label>
+                    <label class="opt">To <input id="to" type="number" step="0.1" value="0"> s</label>
+                    <button id="reset" type="button">Full log</button>
+                    <label class="opt"><input id="brake-only" type="checkbox"> Brake presses only</label>
+                </div>
+            </div>
+        </section>
+
+        <section class="card" id="view" hidden>
+            <h2>At cursor</h2>
+            <div class="row">
+                <label class="opt">Sample <input id="scrub" type="range" min="0" max="0" value="0"></label>
+                <span class="meta" id="when"></span>
+            </div>
+            <div id="tiles"></div>
+            <p class="meta">Scroll on a plot to zoom the time axis. Drag across a plot to zoom to that range. Shift-drag to pan.</p>
+            <div class="charts">
+                <div>
+                    <h3 id="speed-title">Wheel speed</h3>
+                    <div class="plot" id="speed-plot" data-chart="speed">
+                        <canvas id="speed"></canvas>
+                        <canvas class="overlay" id="speed-overlay"></canvas>
+                    </div>
+                    <div class="legend" id="speed-legend"></div>
+                </div>
+                <div id="press-block">
+                    <h3>Line pressure</h3>
+                    <div class="plot" id="press-plot" data-chart="press">
+                        <canvas id="press"></canvas>
+                        <canvas class="overlay" id="press-overlay"></canvas>
+                    </div>
+                    <div class="legend" id="press-legend"></div>
+                </div>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead id="head"></thead>
+                    <tbody id="body"></tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+    <script>
+        const SPEED = [
+            ['vehicle_kmh', 'vehicle_invalid', 'Vehicle', '#f4f4f5', 'km/h'],
+            ['wss_lf_kmh', 'wss_lf_invalid', 'Left front', '#4da3ff', 'km/h'],
+            ['wss_rf_kmh', 'wss_rf_invalid', 'Right front', '#ffb020', 'km/h'],
+            ['wss_lr_kmh', 'wss_lr_invalid', 'Left rear', '#3ddc84', 'km/h'],
+            ['wss_rr_kmh', 'wss_rr_invalid', 'Right rear', '#ff5d73', 'km/h'],
+        ];
+        const PRESS = [
+            ['press_input_bar', null, 'Input', '#c084fc', 'bar'],
+            ['press_lf_bar', null, 'Left front', '#4da3ff', 'bar'],
+            ['press_rf_bar', null, 'Right front', '#ffb020', 'bar'],
+            ['press_lr_bar', null, 'Left rear', '#3ddc84', 'bar'],
+            ['press_rr_bar', null, 'Right rear', '#ff5d73', 'bar'],
+        ];
+        const PALETTE = ['#f4f4f5', '#4da3ff', '#ffb020', '#3ddc84', '#ff5d73', '#c084fc', '#8eb7ff', '#e59a3c'];
+        const PAD = { l: 46, r: 12, t: 12, b: 22 };
+
+        const $ = (id) => document.getElementById(id);
+        const state = {
+            name: '',
+            comments: [],
+            columns: [],
+            col: {},
+            rows: [],
+            time: [],
+            originMs: 0,
+            cursor: 0,
+            view0: 0,
+            view1: 1,
+            duration: 0,
+            speed: [],
+            press: [],
+            hidden: new Set(),
+            tableCols: [],
+        };
+
+        function parseCsv(text) {
+            const rows = [];
+            let row = [];
+            let cell = '';
+            let quoted = false;
+            for (let i = 0; i < text.length; i++) {
+                const c = text[i];
+                if (quoted) {
+                    if (c === '"') {
+                        if (text[i + 1] === '"') { cell += '"'; i++; }
+                        else quoted = false;
+                    } else cell += c;
+                } else if (c === '"') {
+                    quoted = true;
+                } else if (c === ',') {
+                    row.push(cell);
+                    cell = '';
+                } else if (c === '\n') {
+                    row.push(cell);
+                    rows.push(row);
+                    row = [];
+                    cell = '';
+                } else if (c !== '\r') {
+                    cell += c;
+                }
+            }
+            if (cell.length || row.length) {
+                row.push(cell);
+                rows.push(row);
+            }
+            return rows;
+        }
+
+        function coerce(value) {
+            const text = String(value ?? '').trim();
+            if (!text) return null;
+            if (/^-?\d+(\.\d+)?$/.test(text)) return Number(text);
+            return text;
+        }
+
+        function seriesFrom(spec) {
+            return spec
+                .filter(([col]) => state.col[col] != null)
+                .map(([col, invalid, name, color, unit]) => ({ col, invalid, name, color, unit }));
+        }
+
+        function numericColumns() {
+            const skip = new Set(['timestamp_iso', 'elapsed_ms']);
+            const found = [];
+            for (const name of state.columns) {
+                if (skip.has(name) || name.endsWith('_invalid')) continue;
+                if (state.rows.some((row) => typeof row[state.col[name]] === 'number')) found.push(name);
+            }
+            return found.slice(0, 8).map((name, index) => ({
+                col: name,
+                invalid: null,
+                name,
+                color: PALETTE[index % PALETTE.length],
+                unit: '',
+            }));
+        }
+
+        function valueAt(row, series) {
+            if (!row || !series) return null;
+            if (series.invalid && row[state.col[series.invalid]] === 1) return null;
+            const value = row[state.col[series.col]];
+            return typeof value === 'number' ? value : null;
+        }
+
+        function loadText(name, text) {
+            const table = parseCsv(text.replace(/^\uFEFF/, ''));
+            const comments = [];
+            let index = 0;
+            while (index < table.length) {
+                const first = (table[index][0] || '').trim();
+                if (first.startsWith('#')) {
+                    comments.push(table[index].join(',').replace(/^#\s?/, ''));
+                    index++;
+                    continue;
+                }
+                if (table[index].every((cell) => !String(cell).trim())) {
+                    index++;
+                    continue;
+                }
+                break;
+            }
+            if (index >= table.length) throw new Error('The file has no header row.');
+            const columns = table[index].map((cell) => cell.trim());
+            const rows = [];
+            for (let i = index + 1; i < table.length; i++) {
+                if (table[i].every((cell) => !String(cell).trim())) continue;
+                rows.push(columns.map((_, c) => coerce(table[i][c] ?? '')));
+            }
+            if (!rows.length) throw new Error('The file has no samples.');
+
+            state.name = name;
+            state.comments = comments;
+            state.columns = columns;
+            state.col = Object.fromEntries(columns.map((column, i) => [column, i]));
+            state.rows = rows;
+            state.hidden = new Set();
+            const elapsed = state.col.elapsed_ms;
+            const stamp = state.col.timestamp_iso;
+            state.originMs = stamp != null ? Date.parse(rows[0][stamp]) || 0 : 0;
+            state.time = rows.map((row, i) => {
+                if (elapsed != null && typeof row[elapsed] === 'number') return row[elapsed] / 1000;
+                if (stamp != null) {
+                    const ms = Date.parse(row[stamp]);
+                    if (Number.isFinite(ms)) return (ms - state.originMs) / 1000;
+                }
+                return i;
+            });
+            state.duration = state.time[state.time.length - 1] - state.time[0];
+            state.view0 = state.time[0];
+            state.view1 = state.time[state.time.length - 1] || state.view0 + 1;
+            state.cursor = 0;
+
+            const speed = seriesFrom(SPEED);
+            const press = seriesFrom(PRESS);
+            if (speed.length || press.length) {
+                state.speed = speed;
+                state.press = press;
+            } else {
+                state.speed = numericColumns();
+                state.press = [];
+            }
+            state.tableCols = [...state.speed, ...state.press].map((series) => series.col);
+            if (state.col.brake_switch != null) state.tableCols.push('brake_switch');
+
+            $('error').textContent = '';
+            $('loaded').hidden = false;
+            $('view').hidden = false;
+            $('drop-label').textContent = name;
+            $('from').value = state.view0.toFixed(2);
+            $('to').value = state.view1.toFixed(2);
+            $('scrub').max = String(rows.length - 1);
+            $('scrub').value = '0';
+            const span = state.duration.toFixed(2);
+            $('summary').textContent = `${rows.length.toLocaleString()} samples · ${span} s`;
+            $('comments').textContent = comments.join(' · ');
+            $('speed-title').textContent = speed.length || press.length ? 'Wheel speed' : 'Values';
+            $('press-block').hidden = state.press.length === 0;
+            buildTiles();
+            buildLegends();
+            buildHead();
+            showCursor(0);
+            draw();
+        }
+
+        function buildTiles() {
+            const root = $('tiles');
+            root.replaceChildren();
+            const groups = [];
+            if (state.speed.length) groups.push({ title: state.press.length ? 'Wheel speed' : 'Values', series: state.speed });
+            if (state.press.length) groups.push({ title: 'Line pressure', series: state.press });
+            for (const group of groups) {
+                const heading = document.createElement('h3');
+                heading.textContent = group.title;
+                const grid = document.createElement('div');
+                grid.className = 'fields';
+                for (const series of group.series) {
+                    const field = document.createElement('div');
+                    field.className = 'field';
+                    const name = document.createElement('div');
+                    name.className = 'name';
+                    name.textContent = series.name;
+                    const value = document.createElement('div');
+                    value.className = 'value';
+                    const unit = document.createElement('div');
+                    unit.className = 'unit';
+                    unit.textContent = series.unit;
+                    field.append(name, value, unit);
+                    grid.append(field);
+                    series.valueEl = value;
+                }
+                root.append(heading, grid);
+            }
+        }
+
+        function buildLegends() {
+            bindLegend($('speed-legend'), state.speed);
+            bindLegend($('press-legend'), state.press);
+        }
+
+        function bindLegend(container, series) {
+            container.replaceChildren();
+            for (const item of series) {
+                const button = document.createElement('button');
+                button.type = 'button';
+                const swatch = document.createElement('i');
+                swatch.className = 'swatch';
+                swatch.style.background = item.color;
+                button.append(swatch, document.createTextNode(item.name));
+                button.addEventListener('click', () => {
+                    if (state.hidden.has(item.col)) state.hidden.delete(item.col);
+                    else state.hidden.add(item.col);
+                    button.classList.toggle('off', state.hidden.has(item.col));
+                    draw();
+                });
+                container.append(button);
+            }
+        }
+
+        function buildHead() {
+            const row = document.createElement('tr');
+            for (const name of ['Time', ...state.tableCols]) {
+                const cell = document.createElement('th');
+                cell.textContent = name === 'Time' ? name : shortName(name);
+                row.append(cell);
+            }
+            $('head').replaceChildren(row);
+        }
+
+        function shortName(column) {
+            const known = {
+                vehicle_kmh: 'Veh',
+                wss_lf_kmh: 'LF',
+                wss_rf_kmh: 'RF',
+                wss_lr_kmh: 'LR',
+                wss_rr_kmh: 'RR',
+                press_input_bar: 'In',
+                press_lf_bar: 'LF bar',
+                press_rf_bar: 'RF bar',
+                press_lr_bar: 'LR bar',
+                press_rr_bar: 'RR bar',
+                brake_switch: 'Brake',
+            };
+            return known[column] || column;
+        }
+
+        function clock(index) {
+            const seconds = state.time[index];
+            if (state.originMs) {
+                const date = new Date(state.originMs + seconds * 1000);
+                const p = (n, w = 2) => String(n).padStart(w, '0');
+                return `${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}.${p(date.getMilliseconds(), 3)}`;
+            }
+            return `${seconds.toFixed(2)} s`;
+        }
+
+        function showCursor(index) {
+            state.cursor = Math.max(0, Math.min(state.rows.length - 1, index));
+            const row = state.rows[state.cursor];
+            $('scrub').value = String(state.cursor);
+            const brake = state.col.brake_switch != null && row[state.col.brake_switch] === 1;
+            $('when').textContent = `${clock(state.cursor)} · ${state.time[state.cursor].toFixed(2)} s${brake ? ' · brake pressed' : ''}`;
+            for (const series of [...state.speed, ...state.press]) {
+                const value = valueAt(row, series);
+                const invalid = series.invalid && row[state.col[series.invalid]] === 1;
+                series.valueEl.textContent = invalid ? 'invalid' : (value == null ? '—' : String(value));
+                series.valueEl.classList.toggle('invalid', !!invalid);
+            }
+            renderTable();
+            drawCursors();
+        }
+
+        function renderTable() {
+            const body = $('body');
+            body.replaceChildren();
+            const start = Math.max(0, state.cursor - 8);
+            const end = Math.min(state.rows.length, start + 17);
+            for (let i = start; i < end; i++) {
+                const tr = document.createElement('tr');
+                if (i === state.cursor) tr.classList.add('cursor');
+                if (state.col.brake_switch != null && state.rows[i][state.col.brake_switch] === 1) tr.classList.add('brake');
+                const time = document.createElement('td');
+                time.textContent = clock(i);
+                tr.append(time);
+                for (const column of state.tableCols) {
+                    const td = document.createElement('td');
+                    const value = state.rows[i][state.col[column]];
+                    td.textContent = value == null ? '' : String(value);
+                    tr.append(td);
+                }
+                tr.addEventListener('click', () => showCursor(i));
+                body.append(tr);
+            }
+        }
+
+        function viewIndexes() {
+            let start = 0;
+            let end = state.time.length - 1;
+            while (start < end && state.time[start] < state.view0) start++;
+            while (end > start && state.time[end] > state.view1) end--;
+            return [start, end];
+        }
+
+        function nearestIndex(time) {
+            let lo = 0;
+            let hi = state.time.length - 1;
+            while (lo < hi) {
+                const mid = (lo + hi) >> 1;
+                if (state.time[mid] < time) lo = mid + 1;
+                else hi = mid;
+            }
+            if (lo > 0 && Math.abs(state.time[lo - 1] - time) < Math.abs(state.time[lo] - time)) return lo - 1;
+            return lo;
+        }
+
+        function prepareCanvas(canvas) {
+            const dpr = window.devicePixelRatio || 1;
+            const width = canvas.clientWidth || 300;
+            const height = canvas.clientHeight || 220;
+            canvas.width = Math.round(width * dpr);
+            canvas.height = Math.round(height * dpr);
+            const ctx = canvas.getContext('2d');
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            return { ctx, width, height };
+        }
+
+        function drawChart(canvas, series) {
+            const { ctx, width, height } = prepareCanvas(canvas);
+            ctx.clearRect(0, 0, width, height);
+            ctx.fillStyle = '#101315';
+            ctx.fillRect(0, 0, width, height);
+            const plotW = width - PAD.l - PAD.r;
+            const plotH = height - PAD.t - PAD.b;
+            const [i0, i1] = viewIndexes();
+            const span = Math.max(state.view1 - state.view0, 1e-6);
+            const xOf = (t) => PAD.l + ((t - state.view0) / span) * plotW;
+
+            if (state.col.brake_switch != null) {
+                ctx.fillStyle = 'rgba(255, 93, 115, 0.13)';
+                let run = null;
+                for (let i = i0; i <= i1; i++) {
+                    const on = state.rows[i][state.col.brake_switch] === 1;
+                    if (on && run == null) run = state.time[i];
+                    if ((!on || i === i1) && run != null) {
+                        const end = on && i === i1 ? state.time[i] : state.time[Math.max(i - 1, i0)];
+                        ctx.fillRect(xOf(run), PAD.t, Math.max(xOf(end) - xOf(run), 2), plotH);
+                        run = null;
+                    }
+                }
+            }
+
+            let min = Infinity;
+            let max = -Infinity;
+            for (const item of series) {
+                if (state.hidden.has(item.col)) continue;
+                for (let i = i0; i <= i1; i++) {
+                    const value = valueAt(state.rows[i], item);
+                    if (value == null) continue;
+                    min = Math.min(min, value);
+                    max = Math.max(max, value);
+                }
+            }
+            if (min === Infinity) { min = 0; max = 1; }
+            if (min > 0) min = 0;
+            if (max === min) max = min + 1;
+            const ySpan = max - min;
+            min -= ySpan * 0.05;
+            max += ySpan * 0.08;
+            const yOf = (value) => PAD.t + ((max - value) / (max - min)) * plotH;
+
+            ctx.strokeStyle = '#2a3136';
+            ctx.fillStyle = '#8b958e';
+            ctx.font = '11px Consolas, monospace';
+            for (let g = 0; g <= 4; g++) {
+                const y = PAD.t + (plotH * g) / 4;
+                ctx.beginPath();
+                ctx.moveTo(PAD.l, y);
+                ctx.lineTo(width - PAD.r, y);
+                ctx.stroke();
+                ctx.fillText((max - ((max - min) * g) / 4).toFixed(0), 4, y + 4);
+            }
+            const digits = span < 2 ? 2 : span < 20 ? 1 : 0;
+            ctx.fillText(`${state.view0.toFixed(digits)} s`, PAD.l, height - 6);
+            const endLabel = `${state.view1.toFixed(digits)} s`;
+            ctx.fillText(endLabel, width - PAD.r - ctx.measureText(endLabel).width, height - 6);
+
+            const pixels = Math.max(1, Math.floor(plotW));
+            for (const item of series) {
+                if (state.hidden.has(item.col)) continue;
+                ctx.strokeStyle = item.color;
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                let drawing = false;
+                const count = i1 - i0 + 1;
+                if (count <= pixels * 2) {
+                    for (let i = i0; i <= i1; i++) {
+                        const value = valueAt(state.rows[i], item);
+                        if (value == null) { drawing = false; continue; }
+                        const x = xOf(state.time[i]);
+                        const y = yOf(value);
+                        if (!drawing) { ctx.moveTo(x, y); drawing = true; }
+                        else ctx.lineTo(x, y);
+                    }
+                } else {
+                    for (let px = 0; px < pixels; px++) {
+                        const a = i0 + Math.floor((px / pixels) * count);
+                        const b = Math.min(i1, i0 + Math.floor(((px + 1) / pixels) * count));
+                        let lo = Infinity;
+                        let hi = -Infinity;
+                        let midTime = null;
+                        for (let i = a; i <= b; i++) {
+                            const value = valueAt(state.rows[i], item);
+                            if (value == null) continue;
+                            lo = Math.min(lo, value);
+                            hi = Math.max(hi, value);
+                            midTime = state.time[i];
+                        }
+                        if (midTime == null) { drawing = false; continue; }
+                        const x = xOf(midTime);
+                        const y1 = yOf(hi);
+                        const y2 = yOf(lo);
+                        if (!drawing) { ctx.moveTo(x, y1); drawing = true; }
+                        else ctx.lineTo(x, y1);
+                        if (y2 !== y1) ctx.lineTo(x, y2);
+                    }
+                }
+                ctx.stroke();
+            }
+        }
+
+        function draw() {
+            if (!state.rows.length) return;
+            drawChart($('speed'), state.speed);
+            if (state.press.length) drawChart($('press'), state.press);
+            drawCursors();
+        }
+
+        function drawCursors() {
+            drawCursor($('speed'), $('speed-overlay'));
+            if (state.press.length) drawCursor($('press'), $('press-overlay'));
+        }
+
+        function xOfTime(time, width) {
+            const span = Math.max(state.view1 - state.view0, 1e-6);
+            const plotW = width - PAD.l - PAD.r;
+            return PAD.l + ((time - state.view0) / span) * plotW;
+        }
+
+        function drawCursor(source, overlay) {
+            const { ctx, width, height } = prepareCanvas(overlay);
+            ctx.clearRect(0, 0, width, height);
+            if (!state.rows.length) return;
+            if (drag && drag.moved && !drag.pan) {
+                const left = Math.min(xOfTime(drag.t0, width), xOfTime(drag.t1, width));
+                const right = Math.max(xOfTime(drag.t0, width), xOfTime(drag.t1, width));
+                ctx.fillStyle = 'rgba(61, 220, 132, 0.18)';
+                ctx.fillRect(left, PAD.t, Math.max(right - left, 1), height - PAD.b - PAD.t);
+            }
+            const x = xOfTime(state.time[state.cursor], width);
+            if (x < PAD.l || x > width - PAD.r) return;
+            ctx.strokeStyle = 'rgba(243, 245, 244, 0.85)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(x, PAD.t);
+            ctx.lineTo(x, height - PAD.b);
+            ctx.stroke();
+        }
+
+        function setView(start, end) {
+            const lo = state.time[0];
+            const hi = Math.max(state.time[state.time.length - 1], lo + 0.001);
+            const minSpan = Math.max((hi - lo) / 4000, 0.02);
+            let v0 = Math.min(start, end);
+            let v1 = Math.max(start, end);
+            if (v1 - v0 < minSpan) {
+                const mid = (v0 + v1) / 2;
+                v0 = mid - minSpan / 2;
+                v1 = mid + minSpan / 2;
+            }
+            if (v0 < lo) { v1 += lo - v0; v0 = lo; }
+            if (v1 > hi) { v0 -= v1 - hi; v1 = hi; }
+            v0 = Math.max(lo, v0);
+            v1 = Math.min(hi, v1);
+            if (v1 - v0 < minSpan) v1 = Math.min(hi, v0 + minSpan);
+            state.view0 = v0;
+            state.view1 = v1;
+            const digits = v1 - v0 < 2 ? 3 : 2;
+            $('from').value = v0.toFixed(digits);
+            $('to').value = v1.toFixed(digits);
+            $('brake-only').checked = false;
+            const t = state.time[state.cursor];
+            if (t < v0 || t > v1) showCursor(nearestIndex((v0 + v1) / 2));
+            draw();
+        }
+
+        let drag = null;
+
+        function onPlotDown(event) {
+            if (!state.rows.length || event.button !== 0) return;
+            try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* pointer already released */ }
+            drag = {
+                plot: event.currentTarget,
+                x: event.clientX,
+                t0: timeFromEvent(event, event.currentTarget),
+                t1: timeFromEvent(event, event.currentTarget),
+                view0: state.view0,
+                view1: state.view1,
+                pan: event.shiftKey,
+                moved: false,
+            };
+        }
+
+        function onPlotMove(event) {
+            if (!state.rows.length) return;
+            if (!drag || drag.plot !== event.currentTarget) {
+                showCursor(nearestIndex(timeFromEvent(event, event.currentTarget)));
+                return;
+            }
+            if (Math.abs(event.clientX - drag.x) > 5) drag.moved = true;
+            if (!drag.moved) return;
+            if (drag.pan) {
+                const rect = drag.plot.getBoundingClientRect();
+                const plotW = Math.max(rect.width - PAD.l - PAD.r, 1);
+                const span = drag.view1 - drag.view0;
+                const dt = ((event.clientX - drag.x) / plotW) * span;
+                setView(drag.view0 - dt, drag.view1 - dt);
+                return;
+            }
+            drag.t1 = timeFromEvent(event, drag.plot);
+            drawCursors();
+        }
+
+        function onPlotUp(event) {
+            if (!drag || drag.plot !== event.currentTarget) return;
+            const zoom = drag.moved && !drag.pan;
+            const t0 = drag.t0;
+            const t1 = timeFromEvent(event, drag.plot);
+            drag = null;
+            if (zoom) setView(t0, t1);
+            else drawCursors();
+        }
+
+        function onPlotWheel(event) {
+            if (!state.rows.length) return;
+            event.preventDefault();
+            const t = timeFromEvent(event, event.currentTarget);
+            const span = Math.max(state.view1 - state.view0, 1e-6);
+            const factor = Math.exp(Math.max(-1.2, Math.min(1.2, event.deltaY * 0.002)));
+            const next = span * factor;
+            const ratio = (t - state.view0) / span;
+            setView(t - ratio * next, t - ratio * next + next);
+        }
+
+        function applyView() {
+            let from = Number($('from').value);
+            let to = Number($('to').value);
+            if (!Number.isFinite(from)) from = state.time[0];
+            if (!Number.isFinite(to)) to = state.time[state.time.length - 1];
+            if (to <= from) to = from + 0.1;
+            state.view0 = from;
+            state.view1 = to;
+            if ($('brake-only').checked && state.col.brake_switch != null) {
+                const hits = [];
+                for (let i = 0; i < state.rows.length; i++) {
+                    if (state.rows[i][state.col.brake_switch] === 1 && state.time[i] >= from && state.time[i] <= to) hits.push(i);
+                }
+                if (hits.length) {
+                    state.view0 = state.time[hits[0]];
+                    state.view1 = Math.max(state.time[hits[hits.length - 1]], state.view0 + 0.1);
+                }
+            }
+            const t = state.time[state.cursor];
+            if (t < state.view0 || t > state.view1) showCursor(nearestIndex((state.view0 + state.view1) / 2));
+            draw();
+        }
+
+        function openFile(file) {
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                try { loadText(file.name, String(reader.result)); }
+                catch (error) { $('error').textContent = error.message || 'Could not read that CSV.'; }
+            };
+            reader.readAsText(file);
+        }
+
+        function timeFromEvent(event, plot) {
+            const rect = plot.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const span = Math.max(state.view1 - state.view0, 1e-6);
+            const plotW = rect.width - PAD.l - PAD.r;
+            const ratio = (x - PAD.l) / plotW;
+            return state.view0 + Math.min(1, Math.max(0, ratio)) * span;
+        }
+
+        $('file').addEventListener('change', () => openFile($('file').files[0]));
+        $('again').addEventListener('click', () => $('file').click());
+        const drop = $('drop');
+        drop.addEventListener('dragover', (event) => { event.preventDefault(); drop.classList.add('over'); });
+        drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+        drop.addEventListener('drop', (event) => {
+            event.preventDefault();
+            drop.classList.remove('over');
+            openFile(event.dataTransfer.files[0]);
+        });
+        $('from').addEventListener('change', applyView);
+        $('to').addEventListener('change', applyView);
+        $('brake-only').addEventListener('change', applyView);
+        $('reset').addEventListener('click', () => {
+            $('brake-only').checked = false;
+            $('from').value = state.time[0].toFixed(2);
+            $('to').value = state.time[state.time.length - 1].toFixed(2);
+            applyView();
+        });
+        $('scrub').addEventListener('input', () => showCursor(Number($('scrub').value)));
+        for (const id of ['speed-plot', 'press-plot']) {
+            const plot = $(id);
+            plot.addEventListener('pointerdown', onPlotDown);
+            plot.addEventListener('pointermove', onPlotMove);
+            plot.addEventListener('pointerup', onPlotUp);
+            plot.addEventListener('pointercancel', () => { drag = null; drawCursors(); });
+            plot.addEventListener('wheel', onPlotWheel, { passive: false });
+            plot.addEventListener('dblclick', () => $('reset').click());
+        }
+        window.addEventListener('keydown', (event) => {
+            if (!state.rows.length || event.target.matches('input')) return;
+            if (event.key === 'ArrowRight') showCursor(state.cursor + 1);
+            if (event.key === 'ArrowLeft') showCursor(state.cursor - 1);
+        });
+        window.addEventListener('resize', draw);
+        new ResizeObserver(() => draw()).observe($('speed-plot'));
+    </script>
+</body>
+</html>

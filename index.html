@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MK60 HCG Logging</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="wrap">
+        <header class="top">
+            <h1>MK60 HCG Logging</h1>
+        </header>
+        <div class="banner" id="banner" hidden></div>
+
+        <section class="card">
+            <h2>Connection</h2>
+            <div class="row">
+                <button class="primary" id="connect" type="button">Connect</button>
+                <button id="disconnect" type="button" disabled>Disconnect</button>
+                <span class="dot" id="dot"></span>
+                <strong id="state">Disconnected</strong>
+            </div>
+            <p class="error" id="error" role="status"></p>
+            <div class="meta" id="meta"></div>
+        </section>
+
+        <section class="card">
+            <h2>Live</h2>
+            <h3>Wheel speed</h3>
+            <div class="fields">
+                <div class="field"><div class="name">Vehicle</div><div class="value" id="speed-vehicle">—</div><div class="unit">km/h</div></div>
+                <div class="field"><div class="name">Left front</div><div class="value" id="speed-lf">—</div><div class="unit">km/h</div></div>
+                <div class="field"><div class="name">Right front</div><div class="value" id="speed-rf">—</div><div class="unit">km/h</div></div>
+                <div class="field"><div class="name">Left rear</div><div class="value" id="speed-lr">—</div><div class="unit">km/h</div></div>
+                <div class="field"><div class="name">Right rear</div><div class="value" id="speed-rr">—</div><div class="unit">km/h</div></div>
+            </div>
+            <h3>Line pressure</h3>
+            <div class="fields">
+                <div class="field"><div class="name">Input</div><div class="value" id="press-input">—</div><div class="unit">bar</div></div>
+                <div class="field"><div class="name">Left front</div><div class="value" id="press-lf">—</div><div class="unit">bar</div></div>
+                <div class="field"><div class="name">Right front</div><div class="value" id="press-rf">—</div><div class="unit">bar</div></div>
+                <div class="field"><div class="name">Left rear</div><div class="value" id="press-lr">—</div><div class="unit">bar</div></div>
+                <div class="field"><div class="name">Right rear</div><div class="value" id="press-rr">—</div><div class="unit">bar</div></div>
+            </div>
+            <h3>Status</h3>
+            <div class="fields">
+                <div class="field"><div class="name">Brake switch</div><div class="value" id="brake-switch">—</div><div class="unit"></div></div>
+                <div class="field"><div class="name">ABS switch</div><div class="value" id="abs-switch">—</div><div class="unit"></div></div>
+                <div class="field"><div class="name">Braking</div><div class="value" id="braking">—</div><div class="unit"></div></div>
+                <div class="field"><div class="name">ST_DSC</div><div class="value" id="st-dsc">—</div><div class="unit"></div></div>
+                <div class="field"><div class="name">ST_ABS</div><div class="value" id="st-abs">—</div><div class="unit"></div></div>
+                <div class="field"><div class="name">Fault light</div><div class="value" id="fault">—</div><div class="unit"></div></div>
+                <div class="field"><div class="name">Temp</div><div class="value" id="temp">—</div><div class="unit">°C</div></div>
+                <div class="field"><div class="name">CAN rx</div><div class="value" id="can-rx">—</div><div class="unit"></div></div>
+                <div class="field"><div class="name">CAN tx ok</div><div class="value" id="can-tx-ok">—</div><div class="unit"></div></div>
+                <div class="field"><div class="name">CAN tx err</div><div class="value" id="can-tx-err">—</div><div class="unit"></div></div>
+            </div>
+        </section>
+
+        <section class="card">
+            <h2>Traces</h2>
+            <div class="row" style="margin-bottom: 12px">
+                <label class="interval">Window
+                    <select id="window">
+                        <option value="10">10 s</option>
+                        <option value="30" selected>30 s</option>
+                        <option value="60">60 s</option>
+                    </select>
+                </label>
+            </div>
+            <div class="charts">
+                <div>
+                    <canvas id="speed-chart"></canvas>
+                    <div class="legend" id="speed-legend"></div>
+                </div>
+                <div>
+                    <canvas id="press-chart"></canvas>
+                    <div class="legend" id="press-legend"></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="card">
+            <h2>Log</h2>
+            <div class="row">
+                <button class="record" id="record" type="button" aria-pressed="false">Record</button>
+                <button id="export" type="button">Export CSV</button>
+                <button id="clear" type="button">Clear log</button>
+                <label class="interval">Poll gap
+                    <input id="interval" type="number" min="0" max="5000" step="1" value="1"> ms
+                </label>
+                <label class="interval">
+                    <input id="brake-only" type="checkbox">
+                    Record only when brake switch pressed
+                </label>
+            </div>
+            <div class="stats">
+                <div class="stat"><dt>Samples</dt><dd id="log-count">0</dd></div>
+                <div class="stat"><dt>Recording</dt><dd id="log-time">—</dd></div>
+                <div class="stat"><dt>Rate</dt><dd id="rate">—</dd></div>
+                <div class="stat"><dt>Missed</dt><dd id="missed">0</dd></div>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Veh</th>
+                            <th>LF</th>
+                            <th>RF</th>
+                            <th>LR</th>
+                            <th>RR</th>
+                            <th>In</th>
+                            <th>LF bar</th>
+                            <th>RF bar</th>
+                            <th>LR bar</th>
+                            <th>RR bar</th>
+                        </tr>
+                    </thead>
+                    <tbody id="samples"></tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+    <script type="module" src="app.js"></script>
+</body>
+</html>
